@@ -1,0 +1,11 @@
+{
+  "name": "react-messy-dashboard-example",
+  "private": true,
+  "dependencies": {
+    "react": "^18.3.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}

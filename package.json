@@ -1,0 +1,67 @@
+{
+  "name": "refactor-coach",
+  "version": "0.1.0-alpha.0",
+  "description": "Experimental local-first CLI that turns codebase scans into safe, AI-ready refactor plans.",
+  "type": "module",
+  "bin": {
+    "refactor-coach": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "docs",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run typecheck && npm test && npm run build",
+    "prepublishOnly": "node scripts/verify-npm-name.mjs && npm run typecheck && npm test && npm run build",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "refactor",
+    "cli",
+    "code-quality",
+    "ai",
+    "ai-coding",
+    "technical-debt",
+    "static-analysis",
+    "typescript",
+    "javascript",
+    "react",
+    "python",
+    "java"
+  ],
+  "author": "Refactor Coach contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/refactor-coach/refactor-coach.git"
+  },
+  "bugs": {
+    "url": "https://github.com/refactor-coach/refactor-coach/issues"
+  },
+  "homepage": "https://github.com/refactor-coach/refactor-coach#readme",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "fast-glob": "^3.3.2",
+    "ignore": "^5.3.2",
+    "ts-morph": "^23.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
