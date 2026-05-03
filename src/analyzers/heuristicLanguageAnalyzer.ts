@@ -71,7 +71,10 @@ function analyzeFunctions(lines: string[], language: CodeLanguage): FunctionAnal
     const endLine = findFunctionEnd(lines, matches, match, index, language);
     const bodyLines = lines.slice(match.startLine - 1, endLine);
     const body = bodyLines.join('\n');
-    const conditionalCount = countMatches(body, /\b(if|elif|else if|for|while|case|catch|except|switch)\b/g);
+    const conditionalCount = countMatches(
+      body,
+      /\b(if|elif|else if|for|while|case|catch|except|switch)\b/g,
+    );
     const cyclomaticComplexity =
       1 + conditionalCount + countMatches(body, /(&&|\|\||\band\b|\bor\b)/g);
 
@@ -88,7 +91,7 @@ function analyzeFunctions(lines: string[], language: CodeLanguage): FunctionAnal
       maxConditionalDepth: estimateMaxDepth(bodyLines, language),
       cyclomaticComplexity,
       hookCount: 0,
-      apiCallCount: countMatches(body, /\b(requests|httpx|fetch|RestTemplate|WebClient)\b/g),
+      apiCallCount: countApiCalls(body),
       apiCalls: [],
       returnsJsx: false,
       bodyHash: bodyLines.length >= 8 ? hashBody(body) : undefined,
@@ -98,10 +101,13 @@ function analyzeFunctions(lines: string[], language: CodeLanguage): FunctionAnal
 
 function findFunctionMatches(lines: string[], language: CodeLanguage): FunctionMatch[] {
   const matches: FunctionMatch[] = [];
+  let currentJavaType: string | undefined;
 
   lines.forEach((line, index) => {
     if (language === 'python') {
-      const match = line.match(/^(\s*)(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*:/);
+      const match = line.match(
+        /^(\s*)(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*[^:]+)?\s*:/,
+      );
       if (match) {
         matches.push({
           name: match[2],
@@ -113,8 +119,35 @@ function findFunctionMatches(lines: string[], language: CodeLanguage): FunctionM
       return;
     }
 
-    const javaMatch = line.match(
-      /^\s*(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?[A-Za-z0-9_<>\[\], ?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:throws\s+[^{]+)?\{/,
+    const typeMatch = line.match(/\b(?:class|record|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/);
+    if (typeMatch) {
+      currentJavaType = typeMatch[1];
+    }
+
+    const normalizedLine = stripLeadingJavaAnnotations(line);
+    if (/\b(class|record|interface|enum)\s+/.test(normalizedLine)) {
+      return;
+    }
+
+    const constructorMatch = currentJavaType
+      ? normalizedLine.match(
+          new RegExp(
+            `^\\s*(?:(?:public|private|protected)\\s+)?${escapeRegExp(currentJavaType)}\\s*\\(([^)]*)\\)\\s*(?:throws\\s+[^{}]+)?\\{`,
+          ),
+        )
+      : undefined;
+    if (constructorMatch) {
+      matches.push({
+        name: currentJavaType!,
+        startLine: index + 1,
+        parameterCount: countParameters(constructorMatch[1]),
+        braceDepth: braceDepthBefore(lines, index),
+      });
+      return;
+    }
+
+    const javaMatch = normalizedLine.match(
+      /^\s*(?:(?:public|private|protected|static|final|abstract|synchronized|native|default|strictfp)\s+)*(?:<[^>]+>\s*)?(?:[\w$.[\]<>?,]+\s+)+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(([^)]*)\)\s*(?:throws\s+[^{}]+)?\{/,
     );
     if (javaMatch && !['if', 'for', 'while', 'switch', 'catch'].includes(javaMatch[1])) {
       matches.push({
@@ -169,19 +202,41 @@ function detectResponsibilities(
 ): ResponsibilityTag[] {
   const tags = new Set<ResponsibilityTag>();
   if (isTestFile(filePath)) tags.add('testing');
-  if (/\b(requests|httpx|fetch|RestTemplate|WebClient|HttpClient)\b/.test(content)) {
+  if (
+    /\b(requests|httpx|aiohttp|urllib\.request|fetch|RestTemplate|WebClient|HttpClient|OkHttpClient|FeignClient)\b/.test(
+      content,
+    )
+  ) {
     tags.add('data-fetching');
   }
-  if (/\b(validate|schema|pydantic|marshmallow|javax\.validation|jakarta\.validation|required)\b/i.test(content)) {
+  if (
+    /\b(validate|schema|pydantic|BaseModel|Field|validator|marshmallow|javax\.validation|jakarta\.validation|required|Validated|Valid|NotNull|NotBlank|NotEmpty|Size|Pattern)\b/i.test(
+      content,
+    ) ||
+    /@(Valid|Validated|NotNull|NotBlank|NotEmpty|Size|Pattern)\b/.test(content)
+  ) {
     tags.add('validation');
   }
-  if (/\b(sqlalchemy|django\.db|Repository|EntityManager|jdbc|database|query)\b/i.test(content)) {
+  if (
+    /\b(sqlalchemy|django\.db|Session|Repository|CrudRepository|JpaRepository|EntityManager|JdbcTemplate|jdbc|database|query)\b/i.test(
+      content,
+    ) ||
+    /@(Entity|Table|Repository)\b/.test(content)
+  ) {
     tags.add('database');
   }
-  if (/\b(auth|permission|jwt|token|login|logout|security)\b/i.test(content)) {
+  if (/\b(auth|permission|jwt|token|login|logout|security|OAuth2PasswordBearer|Principal)\b/i.test(content)) {
     tags.add('auth');
   }
-  if (/\b(route|router|Controller|@GetMapping|@PostMapping|Flask|FastAPI|Django)\b/.test(content)) {
+  if (
+    /\b(route|router|APIRouter|Controller|RestController|RequestMapping|GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|Flask|FastAPI|Django)\b/.test(
+      content,
+    ) ||
+    /@\w+\.(?:route|get|post|put|patch|delete)\s*\(/.test(content) ||
+    /@(Controller|RestController|RequestMapping|GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b/.test(
+      content,
+    )
+  ) {
     tags.add('routing');
   }
   if (/\b(if|for|while|switch|map|filter|reduce|calculate|compute|transform|normalize)\b/.test(content)) {
@@ -293,7 +348,7 @@ function collectImportSources(lines: string[], language: CodeLanguage): string[]
 
 function countExports(lines: string[], language: CodeLanguage): number {
   if (language === 'python') {
-    return lines.filter((line) => /^def\s+|^class\s+/.test(line)).length;
+    return lines.filter((line) => /^(?:async\s+)?def\s+|^class\s+/.test(line)).length;
   }
 
   return lines.filter((line) => /^\s*public\s+/.test(line)).length;
@@ -372,6 +427,21 @@ function hashBody(body: string): string {
 
 function countMatches(value: string, pattern: RegExp): number {
   return (value.match(pattern) ?? []).length;
+}
+
+function countApiCalls(value: string): number {
+  return countMatches(
+    value,
+    /\b(requests|httpx|aiohttp|urllib\.request|fetch|RestTemplate|WebClient|HttpClient|OkHttpClient|FeignClient)\b/g,
+  );
+}
+
+function stripLeadingJavaAnnotations(line: string): string {
+  return line.replace(/^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*/, '');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function detectLanguage(filePath: string): CodeLanguage {

@@ -372,6 +372,146 @@ public class UserService {
     expect(prompt).toContain('java');
   });
 
+  it('detects deeper Python and Java framework signals and prompt test paths', async () => {
+    const root = createTempProject();
+    mkdirSync(path.join(root, 'src', 'billing'), { recursive: true });
+    mkdirSync(path.join(root, 'src', 'main', 'java', 'com', 'example'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'src', 'billing', 'service.py'),
+      `
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+import httpx
+
+router = APIRouter()
+
+class InvoiceRequest(BaseModel):
+    customer_id: str = Field(min_length=1)
+    amount: int
+
+@router.post("/invoices")
+async def create_invoice(payload: InvoiceRequest, db: Session, permissions, flags, audit) -> dict:
+    if not permissions.get("billing"):
+        return {"status": "denied"}
+    if payload.amount <= 0:
+        return {"status": "invalid"}
+    existing = db.query(Invoice).filter(Invoice.customer_id == payload.customer_id).first()
+    if existing:
+        if flags.get("allow_duplicate"):
+            return {"status": "duplicate_allowed"}
+        return {"status": "duplicate"}
+    if audit.get("required"):
+        if not audit.get("passed"):
+            return {"status": "audit_failed"}
+    response = await httpx.AsyncClient().get("https://example.com/risk")
+    if response.status_code == 200:
+        return {"status": "created"}
+    return {"status": "queued"}
+`,
+    );
+    writeFileSync(
+      path.join(root, 'src', 'main', 'java', 'com', 'example', 'UserService.java'),
+      `
+package com.example;
+
+import java.time.Clock;
+import java.util.List;
+import jakarta.persistence.EntityManager;
+import jakarta.validation.Valid;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.reactive.function.client.WebClient;
+
+@RestController
+public class UserService {
+  private final JdbcTemplate jdbcTemplate;
+  private final EntityManager entityManager;
+  private final WebClient webClient;
+
+  public UserService(JdbcTemplate jdbcTemplate, EntityManager entityManager, WebClient webClient) {
+    this.jdbcTemplate = jdbcTemplate;
+    this.entityManager = entityManager;
+    this.webClient = webClient;
+  }
+
+  @PostMapping("/users/score")
+  public int scoreUser(@Valid UserRequest request, Audit audit, Flags flags, Clock clock, List<String> roles, String token) {
+    if (token == null) {
+      return 0;
+    }
+    if (roles.contains("admin")) {
+      return 100;
+    }
+    if (request.path().contains("/beta")) {
+      if (flags.beta()) {
+        return 80;
+      }
+      return 40;
+    }
+    if (audit.required()) {
+      if (!audit.passed()) {
+        return 0;
+      }
+      return 50;
+    }
+    if (entityManager.find(User.class, request.userId()) == null) {
+      return jdbcTemplate.queryForObject("select 1", Integer.class);
+    }
+    return webClient.get().uri("https://example.com").retrieve().bodyToMono(Integer.class).block();
+  }
+}
+`,
+    );
+
+    const result = await scanRepository(root, {
+      ...defaultConfig,
+      include: ['src/**/*.{py,java}'],
+      thresholds: {
+        ...defaultConfig.thresholds,
+        complexFunctionComplexity: 4,
+      },
+    });
+
+    expect(result.project.languages).toEqual(['java', 'python']);
+
+    const pythonFile = result.files.find((file) => file.path === 'src/billing/service.py');
+    const javaFile = result.files.find(
+      (file) => file.path === 'src/main/java/com/example/UserService.java',
+    );
+    expect(pythonFile?.language).toBe('python');
+    expect(javaFile?.language).toBe('java');
+    expect(pythonFile?.functions.find((fn) => fn.name === 'create_invoice')?.isAsync).toBe(true);
+    expect(javaFile?.functions.some((fn) => fn.name === 'UserService')).toBe(true);
+    expect(pythonFile?.responsibilities).toEqual(
+      expect.arrayContaining(['routing', 'validation', 'data-fetching', 'database']),
+    );
+    expect(javaFile?.responsibilities).toEqual(
+      expect.arrayContaining(['routing', 'validation', 'data-fetching', 'database']),
+    );
+
+    const pythonOpportunity = result.opportunities.find(
+      (opportunity) =>
+        opportunity.files.includes('src/billing/service.py') &&
+        ['simplify-complex-function', 'add-tests-before-refactor'].includes(opportunity.type),
+    );
+    const javaOpportunity = result.opportunities.find(
+      (opportunity) =>
+        opportunity.files.includes('src/main/java/com/example/UserService.java') &&
+        ['simplify-complex-function', 'add-tests-before-refactor'].includes(opportunity.type),
+    );
+    expect(pythonOpportunity).toBeDefined();
+    expect(javaOpportunity).toBeDefined();
+
+    const pythonPrompt = buildAgentPrompt(pythonOpportunity!, result);
+    const javaPrompt = buildAgentPrompt(javaOpportunity!, result);
+    expect(pythonPrompt).toContain('src/billing/test_service.py');
+    expect(javaPrompt).toContain('src/main/java/com/example/UserServiceTest.java');
+    expect(pythonPrompt).not.toContain('.ts');
+    expect(javaPrompt).not.toContain('.ts');
+  });
+
   it('suggests language-appropriate helper paths for Python and Java duplicate prompts', async () => {
     const pythonRoot = createTempProject();
     mkdirSync(path.join(pythonRoot, 'src', 'billing'), { recursive: true });

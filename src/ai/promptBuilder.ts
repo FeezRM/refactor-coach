@@ -135,6 +135,14 @@ function renderEvidence(opportunity: RefactorOpportunity): string {
 
 function inferTestFile(filePath: string): string {
   const parsed = path.parse(filePath);
+  if (parsed.ext === '.py') {
+    return `${parsed.dir ? `${parsed.dir}/` : ''}test_${parsed.name}.py`;
+  }
+
+  if (parsed.ext === '.java') {
+    return `${parsed.dir ? `${parsed.dir}/` : ''}${parsed.name}Test.java`;
+  }
+
   return `${parsed.dir ? `${parsed.dir}/` : ''}${parsed.name}.test${parsed.ext}`;
 }
 

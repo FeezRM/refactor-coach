@@ -1,42 +1,64 @@
-# AI Refactor Coach
+# Refactor Coach
 
-Experimental local-first CLI that finds messy areas in a codebase and turns them into safe, AI-ready refactor plans.
+[![CI](https://github.com/FeezRM/refactor-coach/actions/workflows/ci.yml/badge.svg)](https://github.com/FeezRM/refactor-coach/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Alpha status:** Refactor Coach is useful for quick audits, but the findings are heuristic and false positives are expected. It does not edit your code. Use it to guide Claude Code, Codex, Cursor, Cline, Aider, or another coding agent, then review every change.
+Refactor Coach is a local-first CLI that scans a codebase, finds risky refactor candidates, and turns them into small, reviewable tasks for coding agents.
 
-## What It Does
+It does not edit your source code. It produces reports, JSON scan data, task lists, and bounded prompts that you can hand to Claude Code, Codex, Cursor, Cline, Aider, or another agent while you stay in control of the diff.
 
-- Scans JavaScript, TypeScript, React, Next.js, Expo, and React Native projects.
-- Adds alpha heuristic support for Python and Java.
-- Detects large files/components, complex functions/methods, mixed responsibilities, TODOs, duplicated function bodies, missing tests, and UI data-call smells.
-- Writes markdown reports, JSON scan data, refactor task lists, and bounded agent prompts.
-- Supports tracked agent-led runs with `begin`, `check`, and `complete`.
+> Alpha software: findings are heuristic, false positives are expected, and every generated task should be reviewed by an engineer before implementation.
 
-## Install
+## Why Use It
 
-Global install after the package is published:
+Large refactors usually fail because the first step is too broad. Refactor Coach keeps the first step small:
+
+- Finds high-risk files, complex functions, mixed responsibilities, duplicated logic, missing tests, TODOs, and data-call smells.
+- Ranks opportunities by impact, risk, confidence, and priority.
+- Generates prompts that name the target files, likely tests, constraints, and acceptance criteria.
+- Tracks agent-led refactor runs with a baseline, file hashes, check output, and completion notes.
+- Works offline by default; AI summaries are optional.
+
+## Language Support
+
+| Language or stack | Analysis level | What is detected |
+| --- | --- | --- |
+| TypeScript, JavaScript | Strongest | Imports, exports, functions, React components, hooks, UI data calls, duplication, complexity, nearby tests |
+| React, Next.js, Expo, React Native | Strongest | Large components, hook-heavy components, UI/service boundary issues, workspace context |
+| Python | Alpha heuristic | Async and typed functions, FastAPI/Flask/Django routing, Pydantic/Marshmallow validation, SQLAlchemy/Django DB usage, HTTP clients, complex functions |
+| Java | Alpha heuristic | Methods and constructors, Spring routing annotations, validation annotations, JDBC/JPA usage, HTTP clients, complex methods |
+
+Python and Java support is intentionally conservative. It is designed to produce useful refactor hints, not compiler-grade semantic analysis.
+
+## Installation
+
+Refactor Coach requires Node.js 18 or newer.
+
+From npm, once the package is published:
 
 ```bash
 npm install -g refactor-coach
 refactor-coach scan --no-ai
 ```
 
-Run without installing globally:
+Run without a global install:
 
 ```bash
 npx refactor-coach scan --no-ai
 ```
 
-Local development from this repo:
+Use this repository directly:
 
 ```bash
+git clone https://github.com/FeezRM/refactor-coach.git
+cd refactor-coach
 npm install
 npm run build
 npm link
 refactor-coach scan --no-ai
 ```
 
-Or run directly:
+For local development, you can run the CLI without linking:
 
 ```bash
 npm run dev -- scan --no-ai
@@ -44,12 +66,14 @@ npm run dev -- scan --no-ai
 
 ## Quick Start
 
+Run a focused scan from the root of another project:
+
 ```bash
 cd your-project
 refactor-coach scan --no-ai --limit 10 --min-priority medium
 ```
 
-Example terminal summary:
+Example output:
 
 ```text
 AI Refactor Coach found 18 refactor opportunities.
@@ -65,45 +89,35 @@ Generated prompts: 10 of 18 opportunities
 AI prompts written to .refactor-coach/prompts
 ```
 
-Example report excerpt:
+The generated `.refactor-coach/` directory contains:
 
-```markdown
-### 1. Move API Calls Out Of Dashboard
-
-**File:** `src/components/Dashboard.tsx`
-**Type:** Extract Service Layer
-**Priority:** High
-**Impact:** 8/10
-**Risk:** 4/10
-**Confidence:** 8/10
-
-#### Suggested first step
-
-Add a smoke test for loading, success, and error UI states before extracting requests.
+```text
+.refactor-coach/
+  report.md
+  refactor_tasks.md
+  prompts/
+    01_split_large_dashboard_component.md
+  data/
+    scan.json
+    output-settings.json
 ```
 
 See [`examples/demo-output`](examples/demo-output) for a trimmed report and generated prompt.
 
 ## Agent Workflow
 
-Refactor Coach is meant to plan and verify. Your coding agent still performs the edit.
+Use Refactor Coach as the planning and verification layer around an agent-led edit:
 
 ```bash
 refactor-coach scan --no-ai --limit 10
 refactor-coach next --format json
 refactor-coach begin 1
-# Give .refactor-coach/runs/<runId>/task.md to Claude Code, Codex, Cursor, Cline, or Aider.
+# Give .refactor-coach/runs/<runId>/task.md to your coding agent.
 refactor-coach check --run latest
 refactor-coach complete --run latest
 ```
 
-`begin` also has an `apply` alias:
-
-```bash
-refactor-coach apply 1 --format json
-```
-
-Tracked runs are written to:
+`begin` creates a tracked run without editing source files. It records the selected task, current git status, target file hashes, and baseline copies of the files involved.
 
 ```text
 .refactor-coach/runs/<runId>/
@@ -115,33 +129,9 @@ Tracked runs are written to:
   result.md
 ```
 
-Dirty repos are allowed by default. `begin` records current git status and target file hashes. `check` warns when unrelated files changed.
+`check` compares the current working tree with the baseline and can run detected or configured verification commands. Dirty repositories are allowed by default, but unrelated changes are called out.
 
-## Output Volume
-
-A scan creates a `.refactor-coach/` directory:
-
-```text
-.refactor-coach/
-  report.md
-  refactor_tasks.md
-  prompts/
-    01_split_large_dashboard_component.md
-  data/
-    scan.json
-```
-
-The JSON file keeps the complete scan. Human-facing report/task/prompt output is filtered by default to medium-or-higher priority and capped at 20 opportunities.
-
-Use output controls when a repo produces too much:
-
-```bash
-refactor-coach scan --limit 5
-refactor-coach scan --min-priority high
-refactor-coach scan --limit 20 --min-priority medium
-```
-
-## Commands
+## Command Reference
 
 ```bash
 refactor-coach scan
@@ -149,13 +139,20 @@ refactor-coach scan --path ./src
 refactor-coach scan --format markdown
 refactor-coach scan --format json
 refactor-coach scan --no-ai
+refactor-coach scan --provider openai --model gpt-4.1-mini
 refactor-coach scan --limit 10 --min-priority high
+
+refactor-coach next --format markdown
 refactor-coach next --format json
+
 refactor-coach begin 1
+refactor-coach begin 1 --max-files 4
 refactor-coach apply 1
+
 refactor-coach check --run latest
 refactor-coach check --run latest --no-run-commands
 refactor-coach check --run latest --command "npm test"
+
 refactor-coach complete --run latest
 refactor-coach explain src/components/Dashboard.tsx
 refactor-coach prompt 1
@@ -164,7 +161,7 @@ refactor-coach tasks
 
 ## Configuration
 
-Create `.refactorcoachrc.json` in the repo root:
+Create `.refactorcoachrc.json` in the repository root:
 
 ```json
 {
@@ -201,26 +198,43 @@ Create `.refactorcoachrc.json` in the repo root:
 }
 ```
 
-When `checks.autoDetect` is enabled, package scripts are used in this order when present: `typecheck`, `test`, `lint`, `build`.
+When `checks.autoDetect` is enabled, Refactor Coach uses package scripts in this order when present: `typecheck`, `test`, `lint`, `build`.
+
+## Optional AI Summaries
+
+AI is disabled by default. Enable it through config or by passing a provider/model on the scan command.
+
+Supported providers:
+
+- OpenAI with `OPENAI_API_KEY`
+- Anthropic with `ANTHROPIC_API_KEY`
+- Ollama with `OLLAMA_HOST`, defaulting to `http://localhost:11434`
+
+Example:
+
+```bash
+refactor-coach scan --provider openai --model gpt-4.1-mini --limit 10
+```
+
+Optional AI summaries are used to enrich opportunity explanations. The scanner, reports, JSON output, and prompts work without an AI provider.
 
 ## Safe Usage
 
-- Run on a git repo so you can inspect changes.
+- Run from a git repository so every agent edit is easy to inspect.
 - Start with `scan --no-ai --limit 10`.
-- Read the report before handing prompts to an agent.
-- Use `begin` and `check` for larger agent-led refactors.
+- Read `.refactor-coach/report.md` before handing prompts to an agent.
 - Add characterization tests before changing risky logic.
-- Treat Python and Java results as alpha hints, not authoritative analysis.
+- Use `begin`, `check`, and `complete` for larger changes.
+- Treat Python and Java findings as alpha hints until the heuristics mature.
 
 ## Known Limitations
 
 - Findings are heuristic and ranking can still be noisy.
-- JS/TS/React analysis is strongest; Python and Java support is regex/heuristic alpha support.
-- It does not perform automatic refactors or generate patches.
-- It may miss semantic duplication, framework-specific conventions, and dynamic imports.
-- Generated prompts are bounded, but still require engineer review.
-- `.refactor-coach/` can contain many files unless `--limit` and `--min-priority` are used.
-- Optional AI providers are not required and should not receive whole repositories.
+- Python and Java analysis does not perform type resolution, control-flow analysis, or framework-specific semantic parsing.
+- Refactor Coach does not apply patches or perform automatic refactors.
+- Dynamic imports, metaprogramming, generated code, and semantic duplication can be missed.
+- Generated prompts are bounded, but they still require engineer review.
+- `.refactor-coach/` can contain many files unless `--limit` and `--min-priority` are tuned.
 
 ## Development
 
@@ -232,8 +246,16 @@ npm run build
 npm pack --dry-run
 ```
 
-CI runs those checks on Node 20 and 22.
+Run the demo scan locally:
+
+```bash
+npm run dev -- scan --path examples/react-messy-dashboard --no-ai --limit 5
+npm run dev -- scan --path examples/python-service --no-ai --limit 5 --min-priority low
+npm run dev -- scan --path examples/java-service --no-ai --limit 5 --min-priority low
+```
+
+Contributions are welcome. Small fixtures, false-positive reports, and focused heuristic improvements with tests are the most useful alpha-stage contributions. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)
