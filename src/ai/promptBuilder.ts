@@ -92,29 +92,92 @@ export function buildAiPromptInput(
       hookCount: file.hookCount,
       hasTestsNearby: file.hasTestsNearby,
       responsibilities: file.responsibilities,
-      signals: file.signals,
-      functions: file.functions.map((fn) => ({
-        name: fn.name,
-        startLine: fn.startLine,
-        lineCount: fn.lineCount,
-        parameterCount: fn.parameterCount,
-        cyclomaticComplexity: fn.cyclomaticComplexity,
-        maxConditionalDepth: fn.maxConditionalDepth,
-        returnsJsx: fn.returnsJsx,
-      })),
+      signals: file.signals.slice(0, 4).map(summarizeSignal),
+      functions: file.functions
+        .slice()
+        .sort(
+          (a, b) =>
+            b.cyclomaticComplexity - a.cyclomaticComplexity ||
+            b.lineCount - a.lineCount ||
+            a.startLine - b.startLine,
+        )
+        .slice(0, 5)
+        .map((fn) => ({
+          name: fn.name,
+          startLine: fn.startLine,
+          lineCount: fn.lineCount,
+          parameterCount: fn.parameterCount,
+          cyclomaticComplexity: fn.cyclomaticComplexity,
+          maxConditionalDepth: fn.maxConditionalDepth,
+          returnsJsx: fn.returnsJsx,
+        })),
     }));
 
   return JSON.stringify(
     {
       projectInfo: scanResult.project,
-      opportunity,
+      opportunity: summarizeOpportunity(opportunity),
       fileSummaries,
-      signals: opportunity.signals,
+      signals: opportunity.signals.slice(0, 4).map(summarizeSignal),
       relevantSnippets: [],
     },
     null,
     2,
   );
+}
+
+function summarizeOpportunity(opportunity: RefactorOpportunity) {
+  return {
+    id: opportunity.id,
+    title: opportunity.title,
+    type: opportunity.type,
+    files: opportunity.files,
+    impact: opportunity.impact,
+    risk: opportunity.risk,
+    confidence: opportunity.confidence,
+    priorityLabel: opportunity.priorityLabel,
+    explanation: opportunity.explanation,
+    suggestedSteps: opportunity.suggestedSteps.slice(0, 3),
+    testsToAdd: opportunity.testsToAdd.slice(0, 3),
+    metadata: summarizeMetadata(opportunity.metadata),
+  };
+}
+
+function summarizeSignal(signal: FileAnalysis['signals'][number]) {
+  return {
+    type: signal.type,
+    message: signal.message,
+    severity: signal.severity,
+    location: signal.location,
+    metadata: summarizeMetadata(signal.metadata),
+  };
+}
+
+function summarizeMetadata(metadata: Record<string, unknown> | undefined):
+  | Record<string, unknown>
+  | undefined {
+  if (!metadata) return undefined;
+
+  const summarizedEntries = Object.entries(metadata)
+    .slice(0, 8)
+    .map(([key, value]) => [key, summarizeMetadataValue(value)] as const);
+  return Object.fromEntries(summarizedEntries);
+}
+
+function summarizeMetadataValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.slice(0, 2).map((item) => summarizeMetadataValue(item));
+  }
+
+  if (value && typeof value === 'object') {
+    return summarizeMetadata(value as Record<string, unknown>);
+  }
+
+  if (typeof value === 'string') {
+    return value.length > 160 ? `${value.slice(0, 160)}...` : value;
+  }
+
+  return value;
 }
 
 function renderEvidence(opportunity: RefactorOpportunity): string {

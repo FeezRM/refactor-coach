@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import { defaultConfig } from '../src/config/defaultConfig.ts';
-import { buildAgentPrompt } from '../src/ai/promptBuilder.ts';
+import { buildAgentPrompt, buildAiPromptInput } from '../src/ai/promptBuilder.ts';
 import {
   beginRun,
   checkRun,
@@ -222,6 +222,18 @@ export function validateAuth(token, user, permissions, flags, request, audit) {
     expect(taskList).toContain(`Prompt: \`${outputResult.opportunities[0].aiPromptPath}\``);
     expect(scanJson.opportunities).toHaveLength(result.opportunities.length);
     expect(outputSettings).toEqual({ limit: 1, minPriority: 'low' });
+
+    const zeroLimitConfig = {
+      ...config,
+      output: { ...config.output, limit: 0 },
+    };
+    const zeroLimitOutput = writeScanOutputs(root, zeroLimitConfig, result);
+    const zeroLimitScanJson = JSON.parse(readFileSync(zeroLimitOutput.scanJsonPath!, 'utf8'));
+    const zeroLimitTaskList = readFileSync(zeroLimitOutput.tasksPath!, 'utf8');
+
+    expect(zeroLimitOutput.promptPaths).toHaveLength(0);
+    expect(countTaskHeadings(zeroLimitTaskList)).toBe(0);
+    expect(zeroLimitScanJson.opportunities).toHaveLength(result.opportunities.length);
   });
 
   it('regenerates task output using the latest persisted output settings', async () => {
@@ -739,6 +751,45 @@ describe('scan quality regressions', () => {
     expect(prompt).toContain('apps/mobile/src/lib/readLocalFileAsBlob.ts');
     expect(prompt).not.toContain('src/utils/sharedRefactorHelper.ts');
   });
+
+  it('keeps generated agent prompts and AI summary inputs bounded', async () => {
+    const root = createTempProject();
+    writeExpoMonorepoFixture(root);
+
+    const result = await scanRepository(root, {
+      ...defaultConfig,
+      include: ['apps/**/*.{ts,tsx,js,jsx}', 'packages/**/*.{ts,tsx,js,jsx}'],
+      thresholds: {
+        ...defaultConfig.thresholds,
+        largeFileLines: 220,
+        largeComponentLines: 180,
+        complexFunctionComplexity: 8,
+      },
+    });
+
+    const singleFileOpportunity = result.opportunities.find(
+      (opportunity) => opportunity.files.length === 1,
+    );
+    const duplicateOpportunity = result.opportunities.find(
+      (opportunity) => opportunity.type === 'deduplicate-logic',
+    );
+
+    expect(singleFileOpportunity).toBeDefined();
+    expect(duplicateOpportunity).toBeDefined();
+
+    const singlePrompt = buildAgentPrompt(singleFileOpportunity!, result);
+    const duplicatePrompt = buildAgentPrompt(duplicateOpportunity!, result);
+    const aiPromptInput = buildAiPromptInput(singleFileOpportunity!, result);
+    const parsedAiInput = JSON.parse(aiPromptInput);
+
+    expect(estimateTokens(singlePrompt)).toBeLessThanOrEqual(1000);
+    expect(estimateTokens(duplicatePrompt)).toBeLessThanOrEqual(1500);
+    expect(estimateTokens(aiPromptInput)).toBeLessThanOrEqual(1500);
+    expect(parsedAiInput.relevantSnippets).toEqual([]);
+    expect(parsedAiInput.fileSummaries[0]).not.toHaveProperty('content');
+    expect(singlePrompt).not.toContain('const [email, setEmail]');
+    expect(aiPromptInput).not.toContain('const [email, setEmail]');
+  });
 });
 
 function createTempProject(): string {
@@ -836,6 +887,11 @@ function hashFile(filePath: string): string {
 
 function countTaskHeadings(markdown: string): number {
   return (markdown.match(/^## \d+\. /gm) ?? []).length;
+}
+
+function estimateTokens(markdown: string): number {
+  const compact = markdown.replace(/\s+/g, ' ').trim();
+  return Math.ceil(compact.length / 4);
 }
 
 function writeExpoMonorepoFixture(root: string): void {

@@ -21,12 +21,12 @@ Large refactors usually fail because the first step is too broad. Refactor Coach
 
 ## Language Support
 
-| Language or stack | Analysis level | What is detected |
-| --- | --- | --- |
-| TypeScript, JavaScript | Strongest | Imports, exports, functions, React components, hooks, UI data calls, duplication, complexity, nearby tests |
-| React, Next.js, Expo, React Native | Strongest | Large components, hook-heavy components, UI/service boundary issues, workspace context |
-| Python | Alpha heuristic | Async and typed functions, FastAPI/Flask/Django routing, Pydantic/Marshmallow validation, SQLAlchemy/Django DB usage, HTTP clients, complex functions |
-| Java | Alpha heuristic | Methods and constructors, Spring routing annotations, validation annotations, JDBC/JPA usage, HTTP clients, complex methods |
+| Language or stack                  | Analysis level  | What is detected                                                                                                                                      |
+| ---------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TypeScript, JavaScript             | Strongest       | Imports, exports, functions, React components, hooks, UI data calls, duplication, complexity, nearby tests                                            |
+| React, Next.js, Expo, React Native | Strongest       | Large components, hook-heavy components, UI/service boundary issues, workspace context                                                                |
+| Python                             | Alpha heuristic | Async and typed functions, FastAPI/Flask/Django routing, Pydantic/Marshmallow validation, SQLAlchemy/Django DB usage, HTTP clients, complex functions |
+| Java                               | Alpha heuristic | Methods and constructors, Spring routing annotations, validation annotations, JDBC/JPA usage, HTTP clients, complex methods                           |
 
 Python and Java support is intentionally conservative. It is designed to produce useful refactor hints, not compiler-grade semantic analysis.
 
@@ -62,6 +62,16 @@ For local development, you can run the CLI without linking:
 
 ```bash
 npm run dev -- scan --no-ai
+```
+
+## Claude and Codex Skill Install
+
+From the repo root, copy the skill into both user-level folders:
+
+```bash
+mkdir -p ~/.claude/skills/refactor-coach ~/.agents/skills/refactor-coach \
+  && cp SKILL.md ~/.claude/skills/refactor-coach/SKILL.md \
+  && cp SKILL.md ~/.agents/skills/refactor-coach/SKILL.md
 ```
 
 ## Quick Start
